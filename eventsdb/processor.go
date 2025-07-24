@@ -2,6 +2,7 @@ package eventsdb
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math/big"
 	"time"
@@ -156,6 +157,140 @@ func printEventLog(log types.Log, eventSigs map[string]EventSignatureInfo) {
 	}
 }
 
+// Modified storeEvent function with simplified parameter handling
 func storeEvent(db *gorm.DB, log types.Log, eventSig *EventSignatureInfo) error {
+	eventName := "Unknown"
+	fullSignature := "Unknown"
+
+	if eventSig != nil {
+		eventName = eventSig.Name
+		fullSignature = eventSig.Signature
+	}
+
+	otherTopics := make([]string, 0, len(log.Topics)-1)
+	for i := 1; i < len(log.Topics); i++ {
+		otherTopics = append(otherTopics, log.Topics[i].Hex())
+	}
+
+	decodedParams := make(map[string]interface{})
+	if eventSig != nil && eventSig.OriginalABI != nil {
+		var indexedInputs []abi.Argument
+		var nonIndexedInputs []abi.Argument
+		var originalIndexedInputs []ABIInput
+		var originalNonIndexedInputs []ABIInput
+
+		// Separate indexed and non-indexed inputs
+		for i, input := range eventSig.Inputs {
+			if input.Indexed {
+				indexedInputs = append(indexedInputs, input)
+				if i < len(eventSig.OriginalABI.Inputs) {
+					originalIndexedInputs = append(originalIndexedInputs, eventSig.OriginalABI.Inputs[i])
+				}
+			} else {
+				nonIndexedInputs = append(nonIndexedInputs, input)
+				if i < len(eventSig.OriginalABI.Inputs) {
+					originalNonIndexedInputs = append(originalNonIndexedInputs, eventSig.OriginalABI.Inputs[i])
+				}
+			}
+		}
+
+		// Process indexed parameters (topics)
+		for i, input := range indexedInputs {
+			topicIndex := i + 1
+			if topicIndex < len(log.Topics) {
+				topic := log.Topics[topicIndex]
+
+				var decodedValue interface{}
+				switch input.Type.T {
+				case abi.AddressTy:
+					decodedValue = common.HexToAddress(topic.Hex())
+				case abi.IntTy, abi.UintTy:
+					decodedValue = big.NewInt(0).SetBytes(topic.Bytes())
+				default:
+					decodedValue = topic.Bytes()
+				}
+
+				// Use simplified decoding
+				if i < len(originalIndexedInputs) {
+					decodedParams[input.Name] = decodeParameterWithComponents(decodedValue, originalIndexedInputs[i], input)
+				} else {
+					decodedParams[input.Name] = decodedValue
+				}
+			}
+		}
+
+		// Process non-indexed parameters from data
+		if len(log.Data) > 0 && len(nonIndexedInputs) > 0 {
+			method := abi.NewMethod(eventSig.Name, eventSig.Name, abi.Function, "", false, false, nonIndexedInputs, nil)
+
+			v, err := method.Inputs.UnpackValues(log.Data)
+			if err == nil {
+				for i, input := range nonIndexedInputs {
+					if i < len(v) {
+						// Use simplified decoding
+						if i < len(originalNonIndexedInputs) {
+							decodedParams[input.Name] = decodeParameterWithComponents(v[i], originalNonIndexedInputs[i], input)
+						} else {
+							decodedParams[input.Name] = v[i]
+						}
+					}
+				}
+			}
+		}
+	}
+
+	decodedParamsJSON, err := json.Marshal(decodedParams)
+	if err != nil {
+		return fmt.Errorf("failed to marshal decoded parameters: %w", err)
+	}
+
+	rawData := fmt.Sprintf("%x", log.Data)
+
+	event := BlockchainEvent{
+		TxHash:             log.TxHash.Hex(),
+		TxIndex:            uint(log.TxIndex),
+		BlockNumber:        log.BlockNumber,
+		BlockHash:          log.BlockHash.Hex(),
+		LogIndex:           uint(log.Index),
+		Removed:            log.Removed,
+		ContractAddress:    log.Address.Hex(),
+		EventSignature:     log.Topics[0].Hex(),
+		EventName:          eventName,
+		EventFullSignature: fullSignature,
+		OtherTopics:        otherTopics,
+		RawData:            rawData,
+		DecodedParams:      decodedParamsJSON,
+	}
+
+	result := db.FirstOrCreate(&event, BlockchainEvent{
+		TxHash:   log.TxHash.Hex(),
+		LogIndex: uint(log.Index),
+	})
+
+	if result.Error != nil {
+		return fmt.Errorf("failed to store event: %w", result.Error)
+	}
+
+	if result.RowsAffected == 0 {
+		result = db.Model(&BlockchainEvent{}).
+			Where("tx_hash = ? AND log_index = ?", log.TxHash.Hex(), log.Index).
+			Updates(map[string]interface{}{
+				"tx_index":             uint(log.TxIndex),
+				"block_number":         log.BlockNumber,
+				"block_hash":           log.BlockHash.Hex(),
+				"removed":              log.Removed,
+				"contract_address":     log.Address.Hex(),
+				"event_signature":      log.Topics[0].Hex(),
+				"event_name":           eventName,
+				"event_full_signature": fullSignature,
+				"other_topics":         otherTopics,
+				"raw_data":             rawData,
+				"decoded_params":       decodedParamsJSON,
+			})
+		if result.Error != nil {
+			return fmt.Errorf("failed to update event: %w", result.Error)
+		}
+	}
+
 	return nil
 }
