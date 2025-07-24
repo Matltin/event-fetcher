@@ -3,6 +3,7 @@ package eventsdb
 import (
 	"fmt"
 	"log"
+	"os"
 
 	"github.com/ethereum/go-ethereum/ethclient"
 	"gorm.io/gorm"
@@ -10,9 +11,10 @@ import (
 
 // IndexerService handles the main application logic
 type IndexerService struct {
-	config Config
-	db     *gorm.DB
-	client *ethclient.Client
+	config    Config
+	db        *gorm.DB
+	client    *ethclient.Client
+	eventSigs map[string]EventSignatureInfo
 }
 
 // NewIndexerService creates a new indexer service
@@ -31,15 +33,10 @@ func (s *IndexerService) Start() error {
 		return fmt.Errorf("failed to initialize database: %w", err)
 	}
 
-	// Load event on database
-	if err := s.loadEventSignaturesOnDB(); err != nil {
-		return fmt.Errorf("failed to store event on db : %w", err)
-	}
-
-	// Load event signatures from database
+	// Load event signatures
 	if err := s.loadEventSignatures(); err != nil {
-		log.Printf("Warning: Failed to load event signatures: %v\n", err)
-		log.Println("Continuing without event signature decoding...")
+		fmt.Printf("Warning: Failed to load event signatures: %v\n", err)
+		fmt.Println("Continuing without event signature decoding...")
 	}
 
 	return nil
@@ -64,5 +61,22 @@ func (s *IndexerService) initializeDatabase() error {
 	}
 	s.db = db
 	fmt.Println("Successfully connected to PostgreSQL database")
+	return nil
+}
+
+func (s *IndexerService) loadEventSignatures() error {
+	s.eventSigs = make(map[string]EventSignatureInfo)
+
+	if _, err := os.Stat(s.config.AbiDir); os.IsNotExist(err) {
+		fmt.Printf("ABI directory %s does not exist, continuing without event signature decoding...\n", s.config.AbiDir)
+		return nil
+	}
+
+	loadedSigs, err := loadEventSignatures(s.config.AbiDir)
+	if err != nil {
+		return err
+	}
+
+	s.eventSigs = loadedSigs
 	return nil
 }
