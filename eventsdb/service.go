@@ -59,8 +59,12 @@ func (s *IndexerService) Start() error {
 	fromBlock := s.calculateStartingBlock(latestBlock)
 	contractAddress := common.HexToAddress(s.config.ContractAddr)
 
+	// Process initial logs
+	fmt.Printf("Fetching events from block %s to %s\n", fromBlock.String(), latestBlock.String())
+	processBlockRange(s.client, s.db, contractAddress, fromBlock, latestBlock, s.eventSigs, s.config.MaxRetries, s.config.RetryDelay)
 
-	return nil
+	// Start continuous monitoring
+	return s.startContinuousMonitoring(contractAddress, latestBlock)
 }
 
 func (s *IndexerService) printConfiguration() {
@@ -165,4 +169,51 @@ func (s *IndexerService) calculateStartingBlock(latestBlock *big.Int) *big.Int {
 	}
 
 	return fromBlock
+}
+
+func (s *IndexerService) startContinuousMonitoring(contractAddress common.Address, lastProcessedBlock *big.Int) error {
+	fmt.Println("----------------------------------------")
+	fmt.Println("Starting continuous event monitoring...")
+
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), DefaultConnectionTimeout)
+		header, err := s.client.HeaderByNumber(ctx, nil)
+		cancel()
+
+		if err != nil {
+			fmt.Printf("Error getting latest block: %v. Retrying in %v...\n", err, s.config.RetryDelay)
+			time.Sleep(s.config.RetryDelay)
+
+			// Try to reconnect
+			if reconnectErr := s.reconnectToBlockchain(); reconnectErr != nil {
+				fmt.Printf("Failed to reconnect: %v\n", reconnectErr)
+				continue
+			}
+			continue
+		}
+
+		currentBlock := header.Number
+
+		if currentBlock.Cmp(lastProcessedBlock) > 0 {
+			fromBlock := new(big.Int).Add(lastProcessedBlock, big.NewInt(1))
+			fmt.Printf("New block(s) detected! Checking for events from block %s to %s\n",
+				fromBlock.String(), currentBlock.String())
+
+			processBlockRange(s.client, s.db, contractAddress, fromBlock, currentBlock, s.eventSigs, s.config.MaxRetries, s.config.RetryDelay)
+			lastProcessedBlock = currentBlock
+		}
+
+		time.Sleep(DefaultPollingInterval)
+	}
+}
+
+func (s *IndexerService) reconnectToBlockchain() error {
+	newClient, err := connectWithRetry(s.config.RPC, s.config.MaxRetries, s.config.RetryDelay)
+	if err != nil {
+		return err
+	}
+
+	s.client.Close()
+	s.client = newClient
+	return nil
 }
