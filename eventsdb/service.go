@@ -56,7 +56,10 @@ func (s *IndexerService) Start() error {
 		return fmt.Errorf("failed to get latest block: %w", err)
 	}
 
-	
+	fromBlock := s.calculateStartingBlock(latestBlock)
+	contractAddress := common.HexToAddress(s.config.ContractAddr)
+
+
 	return nil
 }
 
@@ -142,4 +145,24 @@ func (s *IndexerService) getLatestBlock() (*big.Int, error) {
 	}
 
 	return header.Number, nil
+}
+
+func (s *IndexerService) calculateStartingBlock(latestBlock *big.Int) *big.Int {
+	var fromBlock *big.Int
+
+	if s.config.StartBlock == 0 {
+		fromBlock = new(big.Int).Set(latestBlock)
+		fmt.Printf("Starting from the latest block: %s\n", fromBlock.String())
+	} else if s.config.StartBlock < 0 {
+		fromBlock = new(big.Int).Add(latestBlock, big.NewInt(s.config.StartBlock))
+		if fromBlock.Cmp(big.NewInt(0)) < 0 {
+			fromBlock = big.NewInt(0)
+		}
+		fmt.Printf("Starting from %d blocks before latest (%s)\n", -s.config.StartBlock, fromBlock.String())
+	} else {
+		fromBlock = big.NewInt(s.config.StartBlock)
+		fmt.Printf("Starting from block number: %s\n", fromBlock.String())
+	}
+
+	return fromBlock
 }
