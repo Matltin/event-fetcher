@@ -20,8 +20,8 @@ type BlockchainEvent struct {
 	Removed            bool            `gorm:"not null;default:false"`                           // True if log was removed due to chain reorg
 	ContractAddress    string          `gorm:"not null;type:varchar(42);index"`                  // Address of the contract
 	EventSignature     string          `gorm:"not null;type:varchar(66);index"`                  // Keccak of the event signature
-	EventName          *string         `gorm:"type:varchar(255);index;default:NULL"`             // Human-readable event name (NULL if unknown)
-	EventFullSignature *string         `gorm:"type:text;default:NULL"`                           // Full event signature (NULL if unknown)
+	EventName          string         `gorm:"type:varchar(255);index;default:NULL"`             // Human-readable event name (NULL if unknown)
+	EventFullSignature string         `gorm:"type:text;default:NULL"`                           // Full event signature (NULL if unknown)
 	OtherTopics        StringArray     `gorm:"type:text[]"`                                      // Additional event topics
 	RawData            string          `gorm:"type:text"`                                        // Hex-encoded unindexed log data
 	DecodedParams      json.RawMessage `gorm:"type:jsonb"`                                       // Decoded event parameters
