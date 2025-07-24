@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/ethereum/go-ethereum/ethclient"
 	"gorm.io/gorm"
@@ -38,6 +39,11 @@ func (s *IndexerService) Start() error {
 		fmt.Printf("Warning: Failed to load event signatures: %v\n", err)
 		fmt.Println("Continuing without event signature decoding...")
 	}
+
+	if err := s.connectToBlockchain(); err != nil {
+		return fmt.Errorf("failed to connect to blockchain: %w", err)
+	}
+	defer s.client.Close()
 
 	return nil
 }
@@ -78,5 +84,23 @@ func (s *IndexerService) loadEventSignatures() error {
 	}
 
 	s.eventSigs = loadedSigs
+	return nil
+}
+
+func (s *IndexerService) connectToBlockchain() error {
+	// Validate RPC URL format
+	if !strings.HasPrefix(s.config.RPC, "http://") && !strings.HasPrefix(s.config.RPC, "https://") &&
+		!strings.HasPrefix(s.config.RPC, "ws://") && !strings.HasPrefix(s.config.RPC, "wss://") {
+		return fmt.Errorf("invalid RPC URL format: %s. Must start with http://, https://, ws://, or wss://", s.config.RPC)
+	}
+
+	// Connect to node with retry logic
+	fmt.Println("Attempting to connect to RPC endpoint...")
+	client, err := connectWithRetry(s.config.RPC, s.config.MaxRetries, s.config.RetryDelay)
+	if err != nil {
+		return err
+	}
+
+	s.client = client
 	return nil
 }
