@@ -1,11 +1,16 @@
 package eventsdb
 
 import (
+	"context"
 	"fmt"
 	"log"
+	"math/big"
 	"os"
 	"strings"
+	"time"
 
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"gorm.io/gorm"
 )
@@ -45,6 +50,13 @@ func (s *IndexerService) Start() error {
 	}
 	defer s.client.Close()
 
+	// Get latest block and calculate starting block
+	latestBlock, err := s.getLatestBlock()
+	if err != nil {
+		return fmt.Errorf("failed to get latest block: %w", err)
+	}
+
+	
 	return nil
 }
 
@@ -103,4 +115,31 @@ func (s *IndexerService) connectToBlockchain() error {
 
 	s.client = client
 	return nil
+}
+
+func (s *IndexerService) getLatestBlock() (*big.Int, error) {
+	var header *types.Header
+	var err error
+
+	for i := 0; i < s.config.MaxRetries; i++ {
+		fmt.Printf("Getting latest block (attempt %d)...\n", i+1)
+		ctx, cancel := context.WithTimeout(context.Background(), DefaultConnectionTimeout)
+		header, err = s.client.HeaderByNumber(ctx, nil)
+		cancel()
+
+		if err == nil {
+			break
+		}
+
+		if i < s.config.MaxRetries-1 {
+			fmt.Printf("Failed to get latest header (attempt %d): %v. Retrying...\n", i+1, err)
+			time.Sleep(s.config.RetryDelay)
+		}
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get latest header after %d attempts: %w", s.config.MaxRetries, err)
+	}
+
+	return header.Number, nil
 }
