@@ -39,7 +39,12 @@ func (s *IndexerService) Start() error {
 		return fmt.Errorf("failed to initialize database: %w", err)
 	}
 
-	// Load event signatures
+	// Load event on database
+	if err := s.loadEventSignaturesOnDB(); err != nil {
+		return fmt.Errorf("failed to store event on db : %w", err)
+	}
+
+	// Load event signatures from database
 	if err := s.loadEventSignatures(); err != nil {
 		fmt.Printf("Warning: Failed to load event signatures: %v\n", err)
 		fmt.Println("Continuing without event signature decoding...")
@@ -89,15 +94,22 @@ func (s *IndexerService) initializeDatabase() error {
 	return nil
 }
 
+func (s *IndexerService) loadEventSignaturesOnDB() error {
+	if _, err := os.Stat(s.config.AbiDir); os.IsNotExist(err) {
+		return fmt.Errorf("ABI directory %s does not exist, continuing without event signature decoding... ", s.config.AbiDir)
+	}
+
+	if err := loadEventSignaturesOnDB(s.db, s.config.AbiDir); err != nil {
+		return fmt.Errorf("faild to store event on database: %w", err)
+	}
+
+	return nil
+}
+
 func (s *IndexerService) loadEventSignatures() error {
 	s.eventSigs = make(map[string]EventSignatureInfo)
 
-	if _, err := os.Stat(s.config.AbiDir); os.IsNotExist(err) {
-		fmt.Printf("ABI directory %s does not exist, continuing without event signature decoding...\n", s.config.AbiDir)
-		return nil
-	}
-
-	loadedSigs, err := loadEventSignatures(s.config.AbiDir)
+	loadedSigs, err := loadEventSignatures(s.db)
 	if err != nil {
 		return err
 	}
