@@ -13,6 +13,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 func processBlockRange(client *ethclient.Client, db *gorm.DB, contractAddress common.Address, fromBlock, toBlock *big.Int, eventSigs map[string]EventSignatureInfo, maxRetries int, retryDelay time.Duration) {
@@ -157,14 +158,14 @@ func printEventLog(log types.Log, eventSigs map[string]EventSignatureInfo) {
 	}
 }
 
-// Modified storeEvent function with simplified parameter handling
-func storeEvent(db *gorm.DB, log types.Log, eventSig *EventSignatureInfo) error {
-	eventName := "Unknown"
-	fullSignature := "Unknown"
+// Modified storeEvent function with upsert and transaction support
+func storeEvent(tx *gorm.DB, log types.Log, eventSig *EventSignatureInfo) error {
+	var eventName *string
+	var fullSignature *string
 
 	if eventSig != nil {
-		eventName = eventSig.Name
-		fullSignature = eventSig.Signature
+		eventName = &eventSig.Name
+		fullSignature = &eventSig.Signature
 	}
 
 	otherTopics := make([]string, 0, len(log.Topics)-1)
@@ -206,6 +207,12 @@ func storeEvent(db *gorm.DB, log types.Log, eventSig *EventSignatureInfo) error 
 					decodedValue = common.HexToAddress(topic.Hex())
 				case abi.IntTy, abi.UintTy:
 					decodedValue = big.NewInt(0).SetBytes(topic.Bytes())
+				case abi.BoolTy:
+					decodedValue = topic.Bytes()[31] == 1
+				case abi.StringTy:
+					decodedValue = string(topic.Bytes())
+				case abi.FixedBytesTy, abi.BytesTy:
+					decodedValue = fmt.Sprintf("%x", topic.Bytes())
 				default:
 					decodedValue = topic.Bytes()
 				}
@@ -246,6 +253,11 @@ func storeEvent(db *gorm.DB, log types.Log, eventSig *EventSignatureInfo) error 
 
 	rawData := fmt.Sprintf("%x", log.Data)
 
+	logTopic := ""
+	if len(log.Topics) != 0 {
+		logTopic = log.Topics[0].Hex()
+	}
+
 	event := BlockchainEvent{
 		TxHash:             log.TxHash.Hex(),
 		TxIndex:            uint(log.TxIndex),
@@ -254,7 +266,7 @@ func storeEvent(db *gorm.DB, log types.Log, eventSig *EventSignatureInfo) error 
 		LogIndex:           uint(log.Index),
 		Removed:            log.Removed,
 		ContractAddress:    log.Address.Hex(),
-		EventSignature:     log.Topics[0].Hex(),
+		EventSignature:     logTopic,
 		EventName:          eventName,
 		EventFullSignature: fullSignature,
 		OtherTopics:        otherTopics,
@@ -262,34 +274,16 @@ func storeEvent(db *gorm.DB, log types.Log, eventSig *EventSignatureInfo) error 
 		DecodedParams:      decodedParamsJSON,
 	}
 
-	result := db.FirstOrCreate(&event, BlockchainEvent{
-		TxHash:   log.TxHash.Hex(),
-		LogIndex: uint(log.Index),
-	})
+	// Use upsert (OnConflict) to avoid duplicate key errors
+	result := tx.Clauses(
+		clause.OnConflict{
+			Columns:   []clause.Column{{Name: "tx_hash"}, {Name: "log_index"}},
+			DoUpdates: clause.AssignmentColumns([]string{"tx_index", "block_number", "block_hash", "removed", "contract_address", "event_signature", "event_name", "event_full_signature", "other_topics", "raw_data", "decoded_params"}),
+		},
+	).Create(&event)
 
 	if result.Error != nil {
 		return fmt.Errorf("failed to store event: %w", result.Error)
-	}
-
-	if result.RowsAffected == 0 {
-		result = db.Model(&BlockchainEvent{}).
-			Where("tx_hash = ? AND log_index = ?", log.TxHash.Hex(), log.Index).
-			Updates(map[string]interface{}{
-				"tx_index":             uint(log.TxIndex),
-				"block_number":         log.BlockNumber,
-				"block_hash":           log.BlockHash.Hex(),
-				"removed":              log.Removed,
-				"contract_address":     log.Address.Hex(),
-				"event_signature":      log.Topics[0].Hex(),
-				"event_name":           eventName,
-				"event_full_signature": fullSignature,
-				"other_topics":         otherTopics,
-				"raw_data":             rawData,
-				"decoded_params":       decodedParamsJSON,
-			})
-		if result.Error != nil {
-			return fmt.Errorf("failed to update event: %w", result.Error)
-		}
 	}
 
 	return nil
