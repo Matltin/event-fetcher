@@ -294,3 +294,30 @@ func storeEvent(db *gorm.DB, log types.Log, eventSig *EventSignatureInfo) error 
 
 	return nil
 }
+
+func storeCursor(db *gorm.DB, c *big.Int) error {
+	var counter Cursor
+	if err := db.First(&counter, 1).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			// Create the counter if not exists
+			counter = Cursor{
+				ID:    1,
+				Count: int(c.Int64()),
+			}
+			if err := db.Create(&counter).Error; err != nil {
+				return fmt.Errorf("failed to create counter: %w", err)
+			}
+		} else {
+			return fmt.Errorf("failed to query counter: %w", err)
+		}
+	} else {
+		// Update the existing counter
+		if err := db.Model(&Cursor{}).
+			Where("id = ?", 1).
+			Update("count", int(c.Int64())).Error; err != nil {
+			return fmt.Errorf("failed to update counter: %w", err)
+		}
+	}
+
+	return nil
+}
