@@ -36,6 +36,8 @@ func decodeParameterWithComponents(value interface{}, input ABIInput, abiInput a
 	switch val := value.(type) {
 	case *big.Int:
 		return val.String()
+	case *big.Float:
+		return val.String()
 	case common.Address:
 		return val.Hex()
 	case []byte:
