@@ -163,7 +163,7 @@ func loadEventSignaturesOnDB(db *gorm.DB, abiDir string) error {
 		// Parse the original ABI JSON first to get component information
 		abiEvents, err := parseABIJSON(abiData)
 		if err != nil {
-			fmt.Printf("Warning: Could not parse ABI JSON from %s: %v\n", path, err)
+			log.Printf("Warning: Could not parse ABI JSON from %s: %v\n", path, err)
 			return nil
 		}
 
@@ -179,7 +179,7 @@ func loadEventSignaturesOnDB(db *gorm.DB, abiDir string) error {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				eventJSON, err := json.Marshal(e)
 				if err != nil {
-					fmt.Println("Failed to Marshal: ", err)
+					log.Println("Failed to Marshal: ", err)
 					continue
 				}
 				newRecord := ABIEventRecord{
@@ -188,12 +188,12 @@ func loadEventSignaturesOnDB(db *gorm.DB, abiDir string) error {
 					ABIEventJSON:       string(eventJSON),
 				}
 				if err := db.Create(&newRecord).Error; err != nil {
-					fmt.Println("Failed to add DataBase: ", err)
+					log.Println("Failed to add DataBase: ", err)
 					continue
 				}
 
 			} else if err != nil {
-				fmt.Println("Failed to get from database: ", err)
+				log.Println("Failed to get from database: ", err)
 				continue
 			}
 		}
@@ -205,7 +205,7 @@ func loadEventSignaturesOnDB(db *gorm.DB, abiDir string) error {
 		return fmt.Errorf("failed to walk ABI directory: %w", err)
 	}
 
-	fmt.Printf("Loaded %d event signatures from %s\n", counter, abiDir)
+	log.Printf("Loaded %d event signatures from %s\n", counter, abiDir)
 
 	return nil
 }
@@ -252,7 +252,7 @@ func loadEventSignatures(db *gorm.DB) (map[string]EventSignatureInfo, error) {
 		var abiEvent *ABIEvent
 		abiEvent, err := GetABIEventBySignatureHash(db, sigHash)
 		if err != nil {
-			fmt.Println("failed to get abi from database: %w", err)
+			log.Println("failed to get abi from database: %w", err)
 			continue
 		}
 
@@ -268,7 +268,7 @@ func loadEventSignatures(db *gorm.DB) (map[string]EventSignatureInfo, error) {
 			OriginalABI: abiEvent, // Store the original ABI event information
 		}
 
-		fmt.Printf("Loaded event: %s with signature: %s\n", event.Name, sigHash)
+		log.Printf("Loaded event: %s with signature: %s\n", event.Name, sigHash)
 	}
 
 	return eventSigs, nil

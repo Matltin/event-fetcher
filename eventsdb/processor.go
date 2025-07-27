@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	logger "log"
 	"math/big"
 	"time"
 
@@ -46,7 +47,7 @@ func processBlockRange(client *ethclient.Client, db *gorm.DB, contractAddress co
 		}
 
 		if i < maxRetries-1 {
-			fmt.Printf("Failed to filter logs (attempt %d): %v. Retrying...\n", i+1, err)
+			logger.Printf("Failed to filter logs (attempt %d): %v. Retrying...\n", i+1, err)
 			time.Sleep(retryDelay)
 		}
 	}
@@ -61,7 +62,7 @@ func processBlockRange(client *ethclient.Client, db *gorm.DB, contractAddress co
 	}
 
 	if len(logs) == 0 {
-		fmt.Println("No event found")
+		logger.Println("No event found")
 		err = storeCursor(tx, toBlock)
 		if err != nil {
 			tx.Rollback()
@@ -74,7 +75,7 @@ func processBlockRange(client *ethclient.Client, db *gorm.DB, contractAddress co
 		return nil
 	}
 
-	fmt.Printf("Found %d events\n", len(logs))
+	logger.Printf("Found %d events\n", len(logs))
 	for _, log := range logs {
 		var eventSig *EventSignatureInfo
 		if len(log.Topics) > 0 {
@@ -90,7 +91,7 @@ func processBlockRange(client *ethclient.Client, db *gorm.DB, contractAddress co
 			return fmt.Errorf("failed to store event: %v", err)
 		}
 
-		fmt.Printf("Event stored in database successfully (BlockNumber: %d, TxHash: %s, LogIndex: %d)\n",
+		logger.Printf("Event stored in database successfully (BlockNumber: %d, TxHash: %s, LogIndex: %d)\n",
 			log.BlockNumber, log.TxHash.Hex(), log.Index)
 	}
 
@@ -110,41 +111,41 @@ func processBlockRange(client *ethclient.Client, db *gorm.DB, contractAddress co
 }
 
 func printEventLog(log types.Log, eventSigs map[string]EventSignatureInfo) {
-	fmt.Println("----------------------------------------")
-	fmt.Printf("TxHash: %s\n", log.TxHash.Hex())
-	fmt.Printf("TxIndex: %d\n", log.TxIndex)
-	fmt.Printf("Block Number: %d\n", log.BlockNumber)
-	fmt.Printf("Block Hash: %s\n", log.BlockHash.Hex())
-	fmt.Printf("Log Index: %d\n", log.Index)
-	fmt.Printf("Removed: %t\n", log.Removed)
+	logger.Println("----------------------------------------")
+	logger.Printf("TxHash: %s\n", log.TxHash.Hex())
+	logger.Printf("TxIndex: %d\n", log.TxIndex)
+	logger.Printf("Block Number: %d\n", log.BlockNumber)
+	logger.Printf("Block Hash: %s\n", log.BlockHash.Hex())
+	logger.Printf("Log Index: %d\n", log.Index)
+	logger.Printf("Removed: %t\n", log.Removed)
 
 	if len(log.Topics) == 0 {
-		fmt.Println("No topics in log")
+		logger.Println("No topics in log")
 		return
 	}
 
 	topicHex := log.Topics[0].Hex()
-	fmt.Printf("Event Signature: %s\n", topicHex)
+	logger.Printf("Event Signature: %s\n", topicHex)
 
 	eventSig, exists := eventSigs[topicHex]
 	if !exists {
-		fmt.Println("Event: Unknown (signature not found in loaded ABIs)")
+		logger.Println("Event: Unknown (signature not found in loaded ABIs)")
 
 		for i, topic := range log.Topics {
 			if i == 0 {
-				fmt.Printf("Topic 0 (Event Signature): %s\n", topic.Hex())
+				logger.Printf("Topic 0 (Event Signature): %s\n", topic.Hex())
 			} else {
-				fmt.Printf("Topic %d: %s\n", i, topic.Hex())
+				logger.Printf("Topic %d: %s\n", i, topic.Hex())
 			}
 		}
 
 		if len(log.Data) > 0 {
-			fmt.Printf("Raw Data: %x\n", log.Data)
+			logger.Printf("Raw Data: %x\n", log.Data)
 		}
 		return
 	}
 
-	fmt.Printf("Event: %s\n", eventSig.Signature)
+	logger.Printf("Event: %s\n", eventSig.Signature)
 
 	var indexedInputs []abi.Argument
 	var nonIndexedInputs []abi.Argument
@@ -157,7 +158,7 @@ func printEventLog(log types.Log, eventSigs map[string]EventSignatureInfo) {
 	}
 
 	// Process indexed parameters
-	fmt.Println("Indexed Parameters:")
+	logger.Println("Indexed Parameters:")
 	for i, input := range indexedInputs {
 		topicIndex := i + 1
 		if topicIndex < len(log.Topics) {
@@ -166,25 +167,25 @@ func printEventLog(log types.Log, eventSigs map[string]EventSignatureInfo) {
 
 			switch input.Type.T {
 			case abi.AddressTy:
-				fmt.Printf("    Decoded: %s\n", common.HexToAddress(topic.Hex()).Hex())
+				logger.Printf("    Decoded: %s\n", common.HexToAddress(topic.Hex()).Hex())
 			case abi.IntTy, abi.UintTy:
 				val := big.NewInt(0).SetBytes(topic.Bytes())
-				fmt.Printf("    Decoded: %s\n", val.String())
+				logger.Printf("    Decoded: %s\n", val.String())
 			}
 		}
 	}
 
 	// Process non-indexed parameters
 	if len(log.Data) > 0 && len(nonIndexedInputs) > 0 {
-		fmt.Println("Non-Indexed Parameters:")
-		fmt.Printf("  Raw Data: %x\n", log.Data)
-		fmt.Println("  Decoded:")
+		logger.Println("Non-Indexed Parameters:")
+		logger.Printf("  Raw Data: %x\n", log.Data)
+		logger.Println("  Decoded:")
 
 		method := abi.NewMethod(eventSig.Name, eventSig.Name, abi.Function, "", false, false, nonIndexedInputs, nil)
 
 		v, err := method.Inputs.UnpackValues(log.Data)
 		if err != nil {
-			fmt.Printf("    Error decoding data: %v\n", err)
+			logger.Printf("    Error decoding data: %v\n", err)
 		} else {
 			for i, input := range nonIndexedInputs {
 				if i < len(v) {

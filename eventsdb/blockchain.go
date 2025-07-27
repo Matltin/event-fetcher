@@ -24,7 +24,7 @@ func connectWithRetry(rpcURL string, maxRetries int, retryDelay time.Duration) (
 		if err != nil {
 			log.Printf("Dial failed on attempt %d: %v\n", i+1, err)
 			if i < maxRetries-1 {
-				fmt.Printf("Retrying in %v...\n", retryDelay)
+				log.Printf("Retrying in %v...\n", retryDelay)
 				time.Sleep(retryDelay)
 			}
 			continue
@@ -40,7 +40,7 @@ func connectWithRetry(rpcURL string, maxRetries int, retryDelay time.Duration) (
 			client.Close()
 			err = testErr
 			if i < maxRetries-1 {
-				fmt.Printf("Retrying in %v...\n", retryDelay)
+				log.Printf("Retrying in %v...\n", retryDelay)
 				time.Sleep(retryDelay)
 			}
 			continue

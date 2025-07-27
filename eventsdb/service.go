@@ -46,8 +46,8 @@ func (s *IndexerService) Start() error {
 
 	// Load event signatures from database
 	if err := s.loadEventSignatures(); err != nil {
-		fmt.Printf("Warning: Failed to load event signatures: %v\n", err)
-		fmt.Println("Continuing without event signature decoding...")
+		log.Printf("Warning: Failed to load event signatures: %v\n", err)
+		log.Println("Continuing without event signature decoding...")
 	}
 
 	if err := s.connectToBlockchain(); err != nil {
@@ -65,7 +65,7 @@ func (s *IndexerService) Start() error {
 	contractAddress := common.HexToAddress(s.config.ContractAddr)
 
 	// Process initial logs
-	fmt.Printf("Fetching events from block %s to %s\n", fromBlock.String(), latestBlock.String())
+	log.Printf("Fetching events from block %s to %s\n", fromBlock.String(), latestBlock.String())
 	processBlockRange(s.client, s.db, contractAddress, fromBlock, latestBlock, s.eventSigs, s.config.MaxRetries, s.config.RetryDelay)
 
 	// Start continuous monitoring
@@ -90,7 +90,7 @@ func (s *IndexerService) initializeDatabase() error {
 		return err
 	}
 	s.db = db
-	fmt.Println("Successfully connected to PostgreSQL database")
+	log.Println("Successfully connected to PostgreSQL database")
 	return nil
 }
 
@@ -126,7 +126,7 @@ func (s *IndexerService) connectToBlockchain() error {
 	}
 
 	// Connect to node with retry logic
-	fmt.Println("Attempting to connect to RPC endpoint...")
+	log.Println("Attempting to connect to RPC endpoint...")
 	client, err := connectWithRetry(s.config.RPC, s.config.MaxRetries, s.config.RetryDelay)
 	if err != nil {
 		return err
@@ -141,7 +141,7 @@ func (s *IndexerService) getLatestBlock() (*big.Int, error) {
 	var err error
 
 	for i := 0; i < s.config.MaxRetries; i++ {
-		fmt.Printf("Getting latest block (attempt %d)...\n", i+1)
+		log.Printf("Getting latest block (attempt %d)...\n", i+1)
 		ctx, cancel := context.WithTimeout(context.Background(), DefaultConnectionTimeout)
 		header, err = s.client.HeaderByNumber(ctx, nil)
 		cancel()
@@ -151,7 +151,7 @@ func (s *IndexerService) getLatestBlock() (*big.Int, error) {
 		}
 
 		if i < s.config.MaxRetries-1 {
-			fmt.Printf("Failed to get latest header (attempt %d): %v. Retrying...\n", i+1, err)
+			log.Printf("Failed to get latest header (attempt %d): %v. Retrying...\n", i+1, err)
 			time.Sleep(s.config.RetryDelay)
 		}
 	}
@@ -168,24 +168,24 @@ func (s *IndexerService) calculateStartingBlock(latestBlock *big.Int) *big.Int {
 
 	if s.config.StartBlock == 0 {
 		fromBlock = new(big.Int).Set(latestBlock)
-		fmt.Printf("Starting from the latest block: %s\n", fromBlock.String())
+		log.Printf("Starting from the latest block: %s\n", fromBlock.String())
 	} else if s.config.StartBlock < 0 {
 		fromBlock = new(big.Int).Add(latestBlock, big.NewInt(s.config.StartBlock))
 		if fromBlock.Cmp(big.NewInt(0)) < 0 {
 			fromBlock = big.NewInt(0)
 		}
-		fmt.Printf("Starting from %d blocks before latest (%s)\n", -s.config.StartBlock, fromBlock.String())
+		log.Printf("Starting from %d blocks before latest (%s)\n", -s.config.StartBlock, fromBlock.String())
 	} else {
 		fromBlock = big.NewInt(s.config.StartBlock)
-		fmt.Printf("Starting from block number: %s\n", fromBlock.String())
+		log.Printf("Starting from block number: %s\n", fromBlock.String())
 	}
 
 	return fromBlock
 }
 
 func (s *IndexerService) startContinuousMonitoring(contractAddress common.Address, lastProcessedBlock *big.Int) error {
-	fmt.Println("----------------------------------------")
-	fmt.Println("Starting continuous event monitoring...")
+	log.Println("----------------------------------------")
+	log.Println("Starting continuous event monitoring...")
 
 	for {
 		ctx, cancel := context.WithTimeout(context.Background(), DefaultConnectionTimeout)
@@ -193,12 +193,12 @@ func (s *IndexerService) startContinuousMonitoring(contractAddress common.Addres
 		cancel()
 
 		if err != nil {
-			fmt.Printf("Error getting latest block: %v. Retrying in %v...\n", err, s.config.RetryDelay)
+			log.Printf("Error getting latest block: %v. Retrying in %v...\n", err, s.config.RetryDelay)
 			time.Sleep(s.config.RetryDelay)
 
 			// Try to reconnect
 			if reconnectErr := s.reconnectToBlockchain(); reconnectErr != nil {
-				fmt.Printf("Failed to reconnect: %v\n", reconnectErr)
+				log.Printf("Failed to reconnect: %v\n", reconnectErr)
 				continue
 			}
 			continue
@@ -208,7 +208,7 @@ func (s *IndexerService) startContinuousMonitoring(contractAddress common.Addres
 
 		if currentBlock.Cmp(lastProcessedBlock) > 0 {
 			fromBlock := new(big.Int).Add(lastProcessedBlock, big.NewInt(1))
-			fmt.Printf("New block(s) detected! Checking for events from block %s to %s\n",
+			log.Printf("New block(s) detected! Checking for events from block %s to %s\n",
 				fromBlock.String(), currentBlock.String())
 
 			processBlockRange(s.client, s.db, contractAddress, fromBlock, currentBlock, s.eventSigs, s.config.MaxRetries, s.config.RetryDelay)
