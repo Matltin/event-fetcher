@@ -6,7 +6,6 @@ import (
 	"log"
 	"math/big"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -66,22 +65,31 @@ func (s *IndexerService) Start() error {
 
 	// Process initial logs
 	log.Printf("Fetching events from block %s to %s\n", fromBlock.String(), latestBlock.String())
-	processBlockRange(s.client, s.db, contractAddress, fromBlock, latestBlock, s.eventSigs, s.config.MaxRetries, s.config.RetryDelay)
+	processBlockRange(s, contractAddress, fromBlock, latestBlock)
 
 	// Start continuous monitoring
 	return s.startContinuousMonitoring(contractAddress, latestBlock)
 }
 
 func (s *IndexerService) printConfiguration() {
-	log.Println("Configuration:")
-	log.Printf("  RPC Endpoint: %s\n", s.config.RPC)
-	log.Printf("  Contract: %s\n", s.config.ContractAddr)
-	log.Printf("  ABI Directory: %s\n", s.config.AbiDir)
-	log.Printf("  Start Block: %d\n", s.config.StartBlock)
-	log.Printf("  Max Retries: %d\n", s.config.MaxRetries)
-	log.Printf("  Retry Delay: %v\n", s.config.RetryDelay)
-	log.Printf("  GORM Logs: %t\n", s.config.EnableGormLogs)
-	log.Printf("  Postgres: %s:%s@%s:%s/%s\n", s.config.PgUser, "******", s.config.PgHost, s.config.PgPort, s.config.PgDbName)
+	fmt.Println("Configuration:")
+	fmt.Println("  RPC Endpoints:")
+	for i, rpc := range s.config.RPCs {
+		current := ""
+		if i == s.config.CurrentRPCIndex {
+			current = " (current)"
+		}
+		fmt.Printf("    [%d]: %s%s\n", i, rpc, current)
+	}
+	fmt.Printf("  Contract: %s\n", s.config.ContractAddr)
+	fmt.Printf("  ABI Directory: %s\n", s.config.AbiDir)
+	fmt.Printf("  Start Block: %d\n", s.config.StartBlock)
+	fmt.Printf("  Finality Block: %d\n", s.config.FinalityBlock)
+	fmt.Printf("  Max Retries: %d\n", s.config.MaxRetries)
+	fmt.Printf("  Retry Delay: %v\n", s.config.RetryDelay)
+	fmt.Printf("  Max Block Range: %d\n", s.config.MaxBlockRange)
+	fmt.Printf("  GORM Logs: %t\n", s.config.EnableGormLogs)
+	fmt.Printf("  Postgres: %s:%s@%s:%s/%s\n", s.config.PgUser, "******", s.config.PgHost, s.config.PgPort, s.config.PgDbName)
 }
 
 func (s *IndexerService) initializeDatabase() error {
@@ -119,21 +127,23 @@ func (s *IndexerService) loadEventSignatures() error {
 }
 
 func (s *IndexerService) connectToBlockchain() error {
-	// Validate RPC URL format
-	if !strings.HasPrefix(s.config.RPC, "http://") && !strings.HasPrefix(s.config.RPC, "https://") &&
-		!strings.HasPrefix(s.config.RPC, "ws://") && !strings.HasPrefix(s.config.RPC, "wss://") {
-		return fmt.Errorf("invalid RPC URL format: %s. Must start with http://, https://, ws://, or wss://", s.config.RPC)
+	for i := 0; i < len(s.config.RPCs); i++ {
+		rpcURL := s.config.CurrentRPC()
+
+		fmt.Printf("Attempting to connect to RPC: %s\n", rpcURL)
+		client, err := connectWithRetry(rpcURL, s.config.MaxRetries, s.config.RetryDelay)
+		if err != nil {
+			fmt.Printf("Failed to connect to RPC %s: %v\n", rpcURL, err)
+			s.config.NextRPC()
+			continue
+		}
+
+		s.client = client
+		fmt.Printf("Successfully connected to RPC: %s\n", rpcURL)
+		return nil
 	}
 
-	// Connect to node with retry logic
-	log.Println("Attempting to connect to RPC endpoint...")
-	client, err := connectWithRetry(s.config.RPC, s.config.MaxRetries, s.config.RetryDelay)
-	if err != nil {
-		return err
-	}
-
-	s.client = client
-	return nil
+	return fmt.Errorf("failed to connect to all configured RPC endpoints")
 }
 
 func (s *IndexerService) getLatestBlock() (*big.Int, error) {
@@ -211,7 +221,7 @@ func (s *IndexerService) startContinuousMonitoring(contractAddress common.Addres
 			log.Printf("New block(s) detected! Checking for events from block %s to %s\n",
 				fromBlock.String(), currentBlock.String())
 
-			processBlockRange(s.client, s.db, contractAddress, fromBlock, currentBlock, s.eventSigs, s.config.MaxRetries, s.config.RetryDelay)
+			processBlockRange(s, contractAddress, fromBlock, currentBlock)
 			lastProcessedBlock = currentBlock
 		}
 
@@ -220,12 +230,18 @@ func (s *IndexerService) startContinuousMonitoring(contractAddress common.Addres
 }
 
 func (s *IndexerService) reconnectToBlockchain() error {
-	newClient, err := connectWithRetry(s.config.RPC, s.config.MaxRetries, s.config.RetryDelay)
+	s.config.NextRPC()
+	rpcURL := s.config.CurrentRPC()
+
+	fmt.Printf("Reconnecting using RPC: %s\n", rpcURL)
+	client, err := connectWithRetry(rpcURL, s.config.MaxRetries, s.config.RetryDelay)
 	if err != nil {
 		return err
 	}
 
-	s.client.Close()
-	s.client = newClient
+	if s.client != nil {
+		s.client.Close()
+	}
+	s.client = client
 	return nil
 }

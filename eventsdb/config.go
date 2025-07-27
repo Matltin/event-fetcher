@@ -19,42 +19,48 @@ const (
 
 // Configuration for the application
 type Config struct {
-	RPC            string
-	ContractAddr   string
-	AbiDir         string
-	StartBlock     int64
-	FinalityBlock  int64
-	PgHost         string
-	PgPort         string
-	PgUser         string
-	PgPassword     string
-	PgDbName       string
-	MaxRetries     int
-	MaxBlockRange  int64
-	RetryDelay     time.Duration
-	EnableGormLogs bool
+	RPCs            []string
+	CurrentRPCIndex int
+	ContractAddr    string
+	AbiDir          string
+	StartBlock      int64
+	FinalityBlock   int64
+	PgHost          string
+	PgPort          string
+	PgUser          string
+	PgPassword      string
+	PgDbName        string
+	MaxRetries      int
+	MaxBlockRange   int64
+	RetryDelay      time.Duration
+	EnableGormLogs  bool
 }
 
 func LoadConfig() Config {
 	config := Config{
-		RPC:            "https://0xrpc.io/base",
-		ContractAddr:   "0x91Cf2D8Ed503EC52768999aA6D8DBeA6e52dbe43", // SYMMIO on BASE
-		AbiDir:         "./abi",
-		StartBlock:     8443806, // first block
-		FinalityBlock:  DefaultFinalityBlock,
-		PgHost:         "127.0.0.1",
-		PgPort:         "15432",
-		PgUser:         "postgres",
-		PgPassword:     "postgres",
-		PgDbName:       "postgres",
-		MaxRetries:     DefaultMaxRetries,
-		RetryDelay:     DefaultRetryDelay,
-		MaxBlockRange:  DefaultMaxBlockRange,
-		EnableGormLogs: false,
+		RPCs:            []string{"https://0xrpc.io/base"},
+		CurrentRPCIndex: 0,
+		ContractAddr:    "0x91Cf2D8Ed503EC52768999aA6D8DBeA6e52dbe43", // SYMMIO on BASE
+		AbiDir:          "./abi",
+		StartBlock:      8443806, // first block
+		FinalityBlock:   DefaultFinalityBlock,
+		PgHost:          "127.0.0.1",
+		PgPort:          "15432",
+		PgUser:          "postgres",
+		PgPassword:      "postgres",
+		PgDbName:        "postgres",
+		MaxRetries:      DefaultMaxRetries,
+		RetryDelay:      DefaultRetryDelay,
+		MaxBlockRange:   DefaultMaxBlockRange,
+		EnableGormLogs:  false,
 	}
 
-	if rpc := os.Getenv("RPC_URL"); rpc != "" {
-		config.RPC = rpc
+	if rpcEnv := os.Getenv("RPC_URLS"); rpcEnv != "" {
+		rpcList := strings.Split(rpcEnv, ",")
+		for i, rpc := range rpcList {
+			rpcList[i] = strings.TrimSpace(rpc)
+		}
+		config.RPCs = rpcList
 	}
 	if logFlag := os.Getenv("ENABLE_GORM_LOGS"); strings.ToLower(logFlag) == "true" {
 		config.EnableGormLogs = true
@@ -112,4 +118,19 @@ func LoadConfig() Config {
 	}
 
 	return config
+}
+
+// Get the current RPC
+func (c *Config) CurrentRPC() string {
+	if len(c.RPCs) == 0 {
+		return ""
+	}
+	return c.RPCs[c.CurrentRPCIndex]
+}
+
+// Move to the next available RPC in round-robin style
+func (c *Config) NextRPC() {
+	if len(c.RPCs) > 0 {
+		c.CurrentRPCIndex = (c.CurrentRPCIndex + 1) % len(c.RPCs)
+	}
 }

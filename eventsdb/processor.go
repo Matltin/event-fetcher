@@ -12,12 +12,22 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/ethclient"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
-func processBlockRange(client *ethclient.Client, db *gorm.DB, contractAddress common.Address, fromBlock, toBlock *big.Int, eventSigs map[string]EventSignatureInfo, maxRetries int, retryDelay time.Duration) error {
+func processBlockRange(s *IndexerService, contractAddress common.Address, fromBlock, toBlock *big.Int) error {
+	if s == nil {
+		return fmt.Errorf("service is nil")
+	}
+	
+	eventSigs := s.eventSigs
+	maxRetries := s.config.MaxRetries
+	retryDelay := s.config.RetryDelay
+
+	client := s.client
+	db := s.db
+
 	if client == nil {
 		return fmt.Errorf("client is nil")
 	}
