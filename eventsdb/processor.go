@@ -16,7 +16,17 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-func processBlockRange(client *ethclient.Client, db *gorm.DB, contractAddress common.Address, fromBlock, toBlock *big.Int, eventSigs map[string]EventSignatureInfo, maxRetries int, retryDelay time.Duration) {
+func processBlockRange(client *ethclient.Client, db *gorm.DB, contractAddress common.Address, fromBlock, toBlock *big.Int, eventSigs map[string]EventSignatureInfo, maxRetries int, retryDelay time.Duration) error {
+	if client == nil {
+		return fmt.Errorf("client is nil")
+	}
+	if db == nil {
+		return fmt.Errorf("database is nil")
+	}
+	if fromBlock == nil || toBlock == nil {
+		return fmt.Errorf("block numbers cannot be nil")
+	}
+
 	query := ethereum.FilterQuery{
 		FromBlock: fromBlock,
 		ToBlock:   toBlock,
@@ -42,34 +52,61 @@ func processBlockRange(client *ethclient.Client, db *gorm.DB, contractAddress co
 	}
 
 	if err != nil {
-		fmt.Printf("Failed to filter logs after %d attempts: %v\n", maxRetries, err)
-		return
+		return fmt.Errorf("failed to filter logs after %d attempts: %v", maxRetries, err)
 	}
 
-	if len(logs) > 0 {
-		fmt.Printf("Found %d events\n", len(logs))
-		for _, log := range logs {
-			printEventLog(log, eventSigs)
+	tx := db.Begin()
+	if tx.Error != nil {
+		return fmt.Errorf("failed to start transaction: %v", tx.Error)
+	}
 
-			var eventSig *EventSignatureInfo
-			if len(log.Topics) > 0 {
-				topicHex := log.Topics[0].Hex()
-				if sig, exists := eventSigs[topicHex]; exists {
-					eventSig = &sig
-				}
-			}
+	if len(logs) == 0 {
+		fmt.Println("No event found")
+		err = storeCursor(tx, toBlock)
+		if err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to store Cursor: %v", err)
+		}
+		if err := tx.Commit().Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to commit transaction: %v", err)
+		}
+		return nil
+	}
 
-			err = storeEvent(db, log, eventSig)
-			if err != nil {
-				fmt.Printf("Failed to store event: %v\n", err)
-			} else {
-				fmt.Printf("Event stored in database successfully (TxHash: %s, LogIndex: %d)\n",
-					log.TxHash.Hex(), log.Index)
+	fmt.Printf("Found %d events\n", len(logs))
+	for _, log := range logs {
+		var eventSig *EventSignatureInfo
+		if len(log.Topics) > 0 {
+			topicHex := log.Topics[0].Hex()
+			if sig, exists := eventSigs[topicHex]; exists {
+				eventSig = &sig
 			}
 		}
-	} else {
-		fmt.Println("No new events found")
+
+		err = storeEvent(tx, log, eventSig)
+		if err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to store event: %v", err)
+		}
+
+		fmt.Printf("Event stored in database successfully (BlockNumber: %d, TxHash: %s, LogIndex: %d)\n",
+			log.BlockNumber, log.TxHash.Hex(), log.Index)
 	}
+
+	err = storeCursor(tx, toBlock)
+	if err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to store Cursor: %v", err)
+	}
+
+	// Commit transaction
+	if err := tx.Commit().Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to commit transaction: %v", err)
+	}
+
+	return nil
 }
 
 func printEventLog(log types.Log, eventSigs map[string]EventSignatureInfo) {
@@ -289,16 +326,17 @@ func storeEvent(tx *gorm.DB, log types.Log, eventSig *EventSignatureInfo) error 
 	return nil
 }
 
-func storeCursor(db *gorm.DB, c *big.Int) error {
+// Update storeCursor to use transaction
+func storeCursor(tx *gorm.DB, c *big.Int) error {
 	var counter Cursor
-	if err := db.First(&counter, 1).Error; err != nil {
+	if err := tx.First(&counter, 1).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			// Create the counter if not exists
 			counter = Cursor{
 				ID:    1,
 				Count: int(c.Int64()),
 			}
-			if err := db.Create(&counter).Error; err != nil {
+			if err := tx.Create(&counter).Error; err != nil {
 				return fmt.Errorf("failed to create counter: %w", err)
 			}
 		} else {
@@ -306,7 +344,7 @@ func storeCursor(db *gorm.DB, c *big.Int) error {
 		}
 	} else {
 		// Update the existing counter
-		if err := db.Model(&Cursor{}).
+		if err := tx.Model(&Cursor{}).
 			Where("id = ?", 1).
 			Update("count", int(c.Int64())).Error; err != nil {
 			return fmt.Errorf("failed to update counter: %w", err)
