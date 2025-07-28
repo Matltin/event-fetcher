@@ -61,13 +61,21 @@ func (s *IndexerService) Start() error {
 		return fmt.Errorf("failed to get latest block: %w", err)
 	}
 
-	fromBlock := s.calculateStartingBlock(latestBlock)
+	fromBlock, savedBlock := s.calculateStartingBlock(latestBlock)
 	contractAddress := common.HexToAddress(s.config.ContractAddr)
 
-	// Process initial logs
-	log.Printf("Fetching events from block %s to %s\n", fromBlock.String(), latestBlock.String())
-	processBlockRange(s.client, s.db, contractAddress, fromBlock, latestBlock, s.eventSigs, s.config.MaxRetries, s.config.RetryDelay)
+	if fromBlock != nil {
+		fmt.Printf("Fetching events from block %s to %s\n", fromBlock.String(), latestBlock.String())
 
+		fmt.Printf("Processing block range %s to %s\n", fromBlock, latestBlock)
+		err = processBlockRange(s.client, s.db, contractAddress, fromBlock, latestBlock, s.eventSigs, s.config.MaxRetries, s.config.RetryDelay)
+		if err != nil {
+			return fmt.Errorf("failed to process block range %s to %s: %w", fromBlock, latestBlock, err)
+		}
+
+	} else {
+		latestBlock = savedBlock
+	}
 	// Start continuous monitoring
 	return s.startContinuousMonitoring(contractAddress, latestBlock)
 }
@@ -163,24 +171,33 @@ func (s *IndexerService) getLatestBlock() (*big.Int, error) {
 	return header.Number, nil
 }
 
-func (s *IndexerService) calculateStartingBlock(latestBlock *big.Int) *big.Int {
+func (s *IndexerService) calculateStartingBlock(latestBlock *big.Int) (*big.Int, *big.Int) {
 	var fromBlock *big.Int
+	var latestBlockSaved *big.Int
+	var counter Cursor
+	err := s.db.First(&counter).Error
 
-	if s.config.StartBlock == 0 {
-		fromBlock = new(big.Int).Set(latestBlock)
-		log.Printf("Starting from the latest block: %s\n", fromBlock.String())
-	} else if s.config.StartBlock < 0 {
-		fromBlock = new(big.Int).Add(latestBlock, big.NewInt(s.config.StartBlock))
-		if fromBlock.Cmp(big.NewInt(0)) < 0 {
-			fromBlock = big.NewInt(0)
+	if err == nil {
+		block := big.NewInt(int64(counter.Count))
+		if latestBlock.Cmp(block) < 1 {
+			fromBlock = nil
+			latestBlockSaved = block
+		} else {
+			fromBlock = block
+			latestBlockSaved = nil
 		}
-		log.Printf("Starting from %d blocks before latest (%s)\n", -s.config.StartBlock, fromBlock.String())
 	} else {
-		fromBlock = big.NewInt(s.config.StartBlock)
-		log.Printf("Starting from block number: %s\n", fromBlock.String())
+		block := big.NewInt(s.config.StartBlock)
+		if latestBlock.Cmp(block) < 1 {
+			fromBlock = nil
+			latestBlockSaved = block
+		} else {
+			fromBlock = block
+			latestBlockSaved = nil
+		}
 	}
 
-	return fromBlock
+	return fromBlock, latestBlockSaved
 }
 
 func (s *IndexerService) startContinuousMonitoring(contractAddress common.Address, lastProcessedBlock *big.Int) error {
