@@ -67,12 +67,30 @@ func (s *IndexerService) Start() error {
 	if fromBlock != nil {
 		fmt.Printf("Fetching events from block %s to %s\n", fromBlock.String(), latestBlock.String())
 
-		fmt.Printf("Processing block range %s to %s\n", fromBlock, latestBlock)
-		err = processBlockRange(s.client, s.db, contractAddress, fromBlock, latestBlock, s.eventSigs, s.config.MaxRetries, s.config.RetryDelay)
-		if err != nil {
-			return fmt.Errorf("failed to process block range %s to %s: %w", fromBlock, latestBlock, err)
-		}
+		start := fromBlock.Int64()
+		end := latestBlock.Int64()
 
+		for start <= end {
+			// Calculate subrange end block
+			subEnd := start + s.config.MaxBlockRange - 1
+			if subEnd > end {
+				subEnd = end
+			}
+
+			// Convert to big.Int
+			subFromBlock := big.NewInt(start)
+			subToBlock := big.NewInt(subEnd)
+
+			fmt.Printf("Processing block range %d to %d\n", start, subEnd)
+			err = processBlockRange(s.client, s.db, contractAddress, subFromBlock, subToBlock, s.eventSigs, s.config.MaxRetries, s.config.RetryDelay)
+			if err != nil {
+				return fmt.Errorf("failed to process block range %d to %d: %w", start, subEnd, err)
+			}
+
+			// Move to next chunk
+			start = subEnd + 1
+
+		}
 	} else {
 		latestBlock = savedBlock
 	}
