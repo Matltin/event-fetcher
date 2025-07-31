@@ -4,6 +4,7 @@ go 1.24.4
 
 require (
 	github.com/ethereum/go-ethereum v1.16.1
+	github.com/lib/pq v1.10.9
 	golang.org/x/crypto v0.36.0
 	gorm.io/driver/postgres v1.6.0
 	gorm.io/gorm v1.30.0
